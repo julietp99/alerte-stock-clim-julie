@@ -16,7 +16,7 @@ Le reste, tu n'as rien à comprendre ni à toucher.
 import os
 import time
 import random
-import re
+import json
 import requests
 
 # ============================================================
@@ -44,10 +44,9 @@ PRODUITS = [
     },
 ]
 
-# Fréquence de vérification : entre 60 et 120 secondes (1 à 2 min), avec un peu
-# d'aléatoire (jitter) pour ne pas ressembler à un robot trop régulier.
-DELAI_MIN_SECONDES = 60
-DELAI_MAX_SECONDES = 120
+# Fichier qui garde en mémoire le dernier statut connu de chaque site,
+# pour ne pas renvoyer une notif à chaque run si rien n'a changé.
+FICHIER_ETAT = "etat.json"
 
 # Mots qui indiquent que le produit N'EST PAS disponible.
 # Si la page contient un de ces mots, on considère que c'est en rupture.
@@ -82,6 +81,26 @@ def envoyer_telegram(message):
         print(f"[Erreur envoi Telegram] {e}")
 
 
+def charger_etat():
+    """Charge l'état précédent (quel site était dispo la dernière fois)."""
+    if os.path.exists(FICHIER_ETAT):
+        try:
+            with open(FICHIER_ETAT, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[Erreur lecture état] {e}")
+    return {}
+
+
+def sauver_etat(etat):
+    """Sauvegarde l'état pour le prochain run."""
+    try:
+        with open(FICHIER_ETAT, "w") as f:
+            json.dump(etat, f)
+    except Exception as e:
+        print(f"[Erreur écriture état] {e}")
+
+
 def produit_disponible(html):
     """
     Regarde le texte de la page.
@@ -111,7 +130,12 @@ def verification_unique():
     Fait UNE seule vérification de chaque site, puis s'arrête.
     (GitHub Actions relance ce script automatiquement toutes les 5 minutes,
     donc pas besoin de boucle infinie ici.)
+
+    Ne notifie sur Telegram que si le statut vient de PASSER
+    de "indisponible" à "disponible" (pas à chaque run).
     """
+    etat = charger_etat()
+
     for produit in PRODUITS:
         nom = produit["nom"]
         url = produit["url"]
@@ -123,20 +147,20 @@ def verification_unique():
 
         print(f"[{nom}] Disponible ? {disponible}")
 
-        if disponible:
+        etait_disponible = etat.get(nom, False)
+
+        # On ne notifie que lors du changement rupture -> disponible
+        if disponible and not etait_disponible:
             envoyer_telegram(f"🟢 DISPONIBLE chez {nom} !\n{url}")
+
+        etat[nom] = disponible
 
         # Petite pause entre chaque site pour ne pas envoyer les requêtes
         # toutes en même temps (ça fait plus naturel)
         time.sleep(random.uniform(3, 8))
 
+    sauver_etat(etat)
+
 
 if __name__ == "__main__":
     verification_unique()
-name: Sauvegarder l'état
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add etat.json
-          git diff --staged --quiet || git commit -m "Mise à jour état stock"
-          git push
