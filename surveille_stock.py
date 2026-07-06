@@ -133,3 +133,10 @@ def verification_unique():
 
 if __name__ == "__main__":
     verification_unique()
+name: Sauvegarder l'état
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add etat.json
+          git diff --staged --quiet || git commit -m "Mise à jour état stock"
+          git push
